@@ -111,7 +111,7 @@ export class DesktopMain extends Disposable {
 		}
 	}
 
-	async open(): Promise<void> {
+	async open(container?: HTMLElement): Promise<void> {
 
 		// Init services and wait for DOM to be ready in parallel
 		const [services] = await Promise.all([this.initServices(), domContentLoaded(mainWindow)]);
@@ -126,7 +126,10 @@ export class DesktopMain extends Disposable {
 		this.applyWindowZoomLevel(services.configurationService);
 
 		// Create Workbench
-		const workbench = new Workbench(mainWindow.document.body, {
+		// When a container element is provided (e.g. by the app shell), VS Code renders inside
+		// that element instead of document.body. The layout system reads dimensions via
+		// getClientArea(this.parent), so it correctly sizes itself to the container.
+		const workbench = new Workbench(container ?? mainWindow.document.body, {
 			extraClasses: this.getExtraClasses(),
 			resetLayout: this.configuration['disable-layout-restore'] === true
 		}, services.serviceCollection, services.logService);
@@ -413,11 +416,11 @@ export class DesktopMain extends Disposable {
 }
 
 export interface IDesktopMain {
-	main(configuration: INativeWindowConfiguration): Promise<void>;
+	main(configuration: INativeWindowConfiguration, container?: HTMLElement): Promise<void>;
 }
 
-export function main(configuration: INativeWindowConfiguration): Promise<void> {
+export function main(configuration: INativeWindowConfiguration, container?: HTMLElement): Promise<void> {
 	const workbench = new DesktopMain(configuration);
 
-	return workbench.open();
+	return workbench.open(container);
 }

@@ -97,7 +97,8 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 
 		let headers: Record<string, string> | undefined;
 		if (this.environmentService.crossOriginIsolated) {
-			if (pathBasename === 'workbench.html' || pathBasename === 'workbench-dev.html') {
+			if (pathBasename === 'workbench.html' || pathBasename === 'workbench-dev.html' ||
+				pathBasename === 'appShell.html' || pathBasename === 'appShell-dev.html') {
 				headers = COI.CoopAndCoep;
 			} else {
 				headers = COI.getHeadersFromQuery(request.url);
@@ -116,7 +117,8 @@ export class ProtocolMainService extends Disposable implements IProtocolMainServ
 		// Document-policy header is needed for collecting
 		// JavaScript callstacks via https://www.electronjs.org/docs/latest/api/web-frame-main#framecollectjavascriptcallstack-experimental
 		// until https://github.com/electron/electron/issues/45356 is resolved.
-		if (pathBasename === 'workbench.html' || pathBasename === 'workbench-dev.html') {
+		if (pathBasename === 'workbench.html' || pathBasename === 'workbench-dev.html' ||
+			pathBasename === 'appShell.html' || pathBasename === 'appShell-dev.html') {
 			headers = {
 				...headers,
 				...DocumentPolicyheaders

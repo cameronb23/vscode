@@ -8,6 +8,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { promisify } from 'util';
 import glob from 'glob';
+import { transformAsync } from '@babel/core';
 import gulpWatch from '../lib/watch/index.ts';
 import { nlsPlugin, createNLSCollector, finalizeNLS, postProcessNLS } from './nls-plugin.ts';
 import { convertPrivateFields, adjustSourceMap, type ConvertPrivateFieldsResult } from './private-to-property.ts';
@@ -367,6 +368,45 @@ function getResourcePatternsForTarget(target: BuildTarget): string[] {
 // ============================================================================
 // Utilities
 // ============================================================================
+
+/**
+ * Bundles appShell.tsx (SolidJS entry point) via Babel + esbuild into a single ESM file.
+ * Called as part of the transpile step so the bundle is always in sync with the rest of out/.
+ */
+async function buildAppShellBundle(outDir: string): Promise<void> {
+	const entryPoint = path.join(REPO_ROOT, SRC_DIR, 'vs/code/electron-browser/app/appShell.tsx');
+	if (!fs.existsSync(entryPoint)) {
+		return;
+	}
+	const outfile = path.join(REPO_ROOT, outDir, 'vs/code/electron-browser/app/appShell.js');
+	await esbuild.build({
+		entryPoints: [entryPoint],
+		outfile,
+		bundle: true,
+		format: 'esm',
+		platform: 'browser',
+		target: 'es2022',
+		sourcemap: 'inline',
+		plugins: [{
+			name: 'solid',
+			setup(build) {
+				build.onLoad({ filter: /\.(t|j)sx$/ }, async args => {
+					const source = await fs.promises.readFile(args.path, 'utf8');
+					const result = await transformAsync(source, {
+						presets: [
+							['babel-preset-solid'],
+							['@babel/preset-typescript', { isTSX: true, allExtensions: true }],
+						],
+						filename: args.path,
+						sourceMaps: 'inline',
+					});
+					return { contents: result!.code!, loader: 'js' };
+				});
+			},
+		}],
+	});
+	console.log('[appshell] Bundle built');
+}
 
 async function cleanDir(dir: string): Promise<void> {
 	const fullPath = path.join(REPO_ROOT, dir);
@@ -997,6 +1037,7 @@ async function watch(): Promise<void> {
 	try {
 		await transpile(outDir, false);
 		await copyAllNonTsFiles(outDir, false);
+		await buildAppShellBundle(outDir).catch(err => console.error('[appshell] Initial bundle failed:', err));
 		console.log(`Finished transpilation with 0 errors after ${Date.now() - t1} ms`);
 	} catch (err) {
 		console.error('[watch] Initial build failed:', err);
@@ -1035,6 +1076,15 @@ async function watch(): Promise<void> {
 					await fs.promises.copyFile(srcPath, destPath);
 					console.log(`[watch] Copied ${relativePath}`);
 				}));
+			}
+
+			// If any app shell source file changed, rebuild the SolidJS bundle
+			const appShellDir = path.join(REPO_ROOT, SRC_DIR, 'vs/code/electron-browser/app');
+			const appDir = path.join(REPO_ROOT, SRC_DIR, 'app');
+			const isAppShellFile = (f: string) =>
+				(f.startsWith(appShellDir) || f.startsWith(appDir)) && f.endsWith('.tsx');
+			if (filesToCopy.some(isAppShellFile)) {
+				await buildAppShellBundle(outDir).catch(err => console.error('[appshell] Bundle rebuild failed:', err));
 			}
 
 			if (tsFiles.length > 0 || filesToCopy.length > 0) {
@@ -1134,6 +1184,7 @@ async function main(): Promise<void> {
 					const t1 = Date.now();
 					await transpile(outDir, options.excludeTests);
 					await copyAllNonTsFiles(outDir, options.excludeTests);
+					await buildAppShellBundle(outDir).catch(err => console.error('[appshell] Bundle failed:', err));
 					console.log(`[transpile] Done in ${Date.now() - t1}ms`);
 				}
 				break;

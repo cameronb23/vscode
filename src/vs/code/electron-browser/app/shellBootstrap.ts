@@ -1,0 +1,162 @@
+import type { ISandboxConfiguration } from "../../../base/parts/sandbox/common/sandboxTypes.js";
+import type { IMainWindowSandboxGlobals } from "../../../base/parts/sandbox/electron-browser/globals.js";
+
+const preloadGlobals = (
+	window as unknown as { vscode: IMainWindowSandboxGlobals }
+).vscode;
+const safeProcess = preloadGlobals.process;
+
+export function fileUriFromPath(
+	path: string,
+	config: { isWindows?: boolean; scheme?: string; fallbackAuthority?: string },
+): string {
+	// Since we are building a URI, we normalize any backslash
+	// to slashes and we ensure that the path begins with a '/'.
+	let pathName = path.replace(/\\/g, "/");
+	if (pathName.length > 0 && pathName.charAt(0) !== "/") {
+		pathName = `/${pathName}`;
+	}
+
+	let uri: string;
+
+	// Windows: in order to support UNC paths (which start with '//')
+	// that have their own authority, we do not use the provided authority
+	// but rather preserve it.
+	if (config.isWindows && pathName.startsWith("//")) {
+		uri = encodeURI(`${config.scheme || "file"}:${pathName}`);
+	} else {
+		uri = encodeURI(
+			`${config.scheme || "file"}://${config.fallbackAuthority || ""}${pathName}`,
+		);
+	}
+
+	return uri.replace(/#/g, "%23");
+}
+
+export function setupNLS<T extends ISandboxConfiguration>(
+	configuration: T,
+): void {
+	globalThis._VSCODE_NLS_MESSAGES = configuration.nls.messages;
+	globalThis._VSCODE_NLS_LANGUAGE = configuration.nls.language;
+
+	let language = configuration.nls.language || "en";
+	if (language === "zh-tw") {
+		language = "zh-Hant";
+	} else if (language === "zh-cn") {
+		language = "zh-Hans";
+	}
+
+	window.document.documentElement.setAttribute("lang", language);
+}
+
+export function setupCSSImportMaps<T extends ISandboxConfiguration>(
+	configuration: T,
+	baseUrl: URL,
+): void {
+	// DEV ---------------------------------------------------------------------------------------
+	// DEV: This is for development and enables loading CSS via import-statements via import-maps.
+	// DEV: For each CSS modules that we have we defined an entry in the import map that maps to
+	// DEV: a blob URL that loads the CSS via a dynamic @import-rule.
+	// DEV ---------------------------------------------------------------------------------------
+
+	if (globalThis._VSCODE_DISABLE_CSS_IMPORT_MAP) {
+		return; // disabled in certain development setups
+	}
+
+	if (
+		Array.isArray(configuration.cssModules) &&
+		configuration.cssModules.length > 0
+	) {
+		performance.mark("code/willAddCssLoader");
+
+		globalThis._VSCODE_CSS_LOAD = function (url) {
+			const link = document.createElement("link");
+			link.setAttribute("rel", "stylesheet");
+			link.setAttribute("type", "text/css");
+			link.setAttribute("href", url);
+			window.document.head.appendChild(link);
+		};
+
+		const importMap: { imports: Record<string, string> } = { imports: {} };
+		for (const cssModule of configuration.cssModules) {
+			const cssUrl = new URL(cssModule, baseUrl).href;
+			const jsSrc = `globalThis._VSCODE_CSS_LOAD('${cssUrl}');\n`;
+			const blob = new Blob([jsSrc], { type: "application/javascript" });
+			importMap.imports[cssUrl] = URL.createObjectURL(blob);
+		}
+
+		const ttp = window.trustedTypes?.createPolicy("vscode-bootstrapImportMap", {
+			createScript(value) {
+				return value;
+			},
+		});
+		const importMapSrc = JSON.stringify(importMap, undefined, 2);
+		const importMapScript = document.createElement("script");
+		importMapScript.type = "importmap";
+		importMapScript.setAttribute("nonce", "0c6a828f1297");
+		// @ts-expect-error
+		importMapScript.textContent =
+			ttp?.createScript(importMapSrc) ?? importMapSrc;
+		window.document.head.appendChild(importMapScript);
+
+		performance.mark("code/didAddCssLoader");
+	}
+}
+
+export async function resolveWindowConfiguration<
+	T extends ISandboxConfiguration,
+>(): Promise<T> {
+	const timeout = setTimeout(() => {
+		console.error(
+			`[resolve window config] Could not resolve window configuration within 10 seconds, but will continue to wait...`,
+		);
+	}, 10000);
+	performance.mark("code/willWaitForWindowConfig");
+
+	const configuration =
+		(await preloadGlobals.context.resolveConfiguration()) as T;
+	performance.mark("code/didWaitForWindowConfig");
+
+	clearTimeout(timeout);
+
+	return configuration;
+}
+
+export function registerDeveloperKeybindings(
+	disallowReloadKeybinding: boolean | undefined,
+): () => void {
+	const ipcRenderer = preloadGlobals.ipcRenderer;
+
+	const extractKey = (e: KeyboardEvent) =>
+		[
+			e.ctrlKey ? "ctrl-" : "",
+			e.metaKey ? "meta-" : "",
+			e.altKey ? "alt-" : "",
+			e.shiftKey ? "shift-" : "",
+			e.keyCode,
+		].join("");
+
+	// Devtools & reload support
+	const TOGGLE_DEV_TOOLS_KB =
+		safeProcess.platform === "darwin" ? "meta-alt-73" : "ctrl-shift-73"; // mac: Cmd-Alt-I, rest: Ctrl-Shift-I
+	const TOGGLE_DEV_TOOLS_KB_ALT = "123"; // F12
+	const RELOAD_KB = safeProcess.platform === "darwin" ? "meta-82" : "ctrl-82"; // mac: Cmd-R, rest: Ctrl-R
+
+	let listener: ((e: KeyboardEvent) => void) | undefined = (e) => {
+		const key = extractKey(e);
+		if (key === TOGGLE_DEV_TOOLS_KB || key === TOGGLE_DEV_TOOLS_KB_ALT) {
+			ipcRenderer.send("vscode:toggleDevTools");
+		} else if (key === RELOAD_KB && !disallowReloadKeybinding) {
+			ipcRenderer.send("vscode:reloadWindow");
+		}
+	};
+
+	window.addEventListener("keydown", listener);
+
+	return () => {
+		if (listener) {
+			window.removeEventListener("keydown", listener);
+			listener = undefined;
+		}
+	};
+}

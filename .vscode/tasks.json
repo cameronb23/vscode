@@ -89,6 +89,36 @@
 			}
 		},
 		{
+			"type": "npm",
+			"script": "watch-appshell-d",
+			"label": "AppShell - Watch",
+			"isBackground": true,
+			"presentation": {
+				"reveal": "never",
+				"group": "buildWatchers",
+				"close": false
+			},
+			"problemMatcher": {
+				"owner": "esbuild",
+				"applyTo": "closedDocuments",
+				"fileLocation": [
+					"relative",
+					"${workspaceFolder}/src"
+				],
+				"pattern": {
+					"regexp": "^(.+?):(\\d+):(\\d+): ERROR: (.+)$",
+					"file": 1,
+					"line": 2,
+					"column": 3,
+					"message": 4
+				},
+				"background": {
+					"beginsPattern": "\\[appshell\\] Watching",
+					"endsPattern": "\\[appshell\\] Build"
+				}
+			}
+		},
+		{
 			"label": "VS Code - Build",
 			"dependsOn": [
 				"Core - Transpile",
@@ -136,6 +166,18 @@
 				"close": true
 			},
 			"problemMatcher": "$tsc"
+		},
+		{
+			"type": "npm",
+			"script": "kill-watch-appshell-d",
+			"label": "Kill AppShell - Watch",
+			"group": "build",
+			"presentation": {
+				"reveal": "never",
+				"group": "buildKillers",
+				"close": true
+			},
+			"problemMatcher": []
 		},
 		{
 			"label": "Kill VS Code - Build",

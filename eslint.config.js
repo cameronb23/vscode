@@ -2228,4 +2228,18 @@ export default tseslint.config(
 			],
 		}
 	},
+	{
+		files: [
+			'src/app/**/*.ts*',
+			'src/vs/code/electron-browser/app/**/*.ts*',
+			'build/lib/bundleAppShell.ts'
+		],
+		languageOptions: {
+			parser: tseslint.parser,
+		},
+		rules: {
+			'header/header': 'off',
+			'local/code-no-unexternalized-strings': 'off'
+		}
+	},
 );

@@ -97,7 +97,7 @@ import { ICodeWindow } from '../../platform/window/electron-main/window.js';
 import { WindowsMainService } from '../../platform/windows/electron-main/windowsMainService.js';
 import { ActiveWindowManager } from '../../platform/windows/node/windowTracker.js';
 import { hasWorkspaceFileExtension } from '../../platform/workspace/common/workspace.js';
-import { IWorkspacesService } from '../../platform/workspaces/common/workspaces.js';
+import { IWorkspacesService, isRecentFolder, isRecentWorkspace } from '../../platform/workspaces/common/workspaces.js';
 import { IWorkspacesHistoryMainService, WorkspacesHistoryMainService } from '../../platform/workspaces/electron-main/workspacesHistoryMainService.js';
 import { WorkspacesMainService } from '../../platform/workspaces/electron-main/workspacesMainService.js';
 import { IWorkspacesManagementMainService, WorkspacesManagementMainService } from '../../platform/workspaces/electron-main/workspacesManagementMainService.js';
@@ -150,6 +150,8 @@ export class CodeApplication extends Disposable {
 	private windowsMainService: IWindowsMainService | undefined;
 	private auxiliaryWindowsMainService: IAuxiliaryWindowsMainService | undefined;
 	private nativeHostMainService: INativeHostMainService | undefined;
+	private workspacesHistoryMainService: IWorkspacesHistoryMainService | undefined;
+	private dialogMainServiceForShell: IDialogMainService | undefined;
 
 	constructor(
 		private readonly mainProcessNodeIpcServer: NodeIPCServer,
@@ -537,6 +539,79 @@ export class CodeApplication extends Disposable {
 			}
 		});
 
+		//#region App Shell IPC Handlers
+
+		// Returns recently opened workspaces for the home page renderer.
+		// Called from the home page before VS Code's workbench services are available.
+		validatedIpcMain.handle('vscode:getRecentlyOpened', async () => {
+			if (!this.workspacesHistoryMainService) {
+				return { workspaces: [], files: [] };
+			}
+			const recentlyOpened = await this.workspacesHistoryMainService.getRecentlyOpened();
+			return {
+				workspaces: recentlyOpened.workspaces.map(w => {
+					if (isRecentFolder(w)) {
+						return { type: 'folder', uri: w.folderUri.toJSON(), label: w.label };
+					} else if (isRecentWorkspace(w)) {
+						return { type: 'workspace', uri: w.workspace.configPath.toJSON(), label: w.label };
+					}
+					return undefined;
+				}).filter(Boolean),
+				files: []
+			};
+		});
+
+		// Opens the native folder picker and loads the selected folder in the current window.
+		// Called from the home page's "Open Folder…" button.
+		validatedIpcMain.handle('vscode:pickFolderAndOpenInCurrentWindow', async (event) => {
+			if (!this.dialogMainServiceForShell || !this.windowsMainService) {
+				return;
+			}
+			const paths = await this.dialogMainServiceForShell.pickFolder({});
+			if (paths && paths.length > 0) {
+				await this.windowsMainService.open({
+					context: OpenContext.DIALOG,
+					cli: this.environmentMainService.args,
+					urisToOpen: paths.map(p => ({ folderUri: URI.file(p) })),
+					forceReuseWindow: true,
+					contextWindowId: this.windowsMainService.getWindowByWebContents(event.sender)?.id
+				});
+			}
+		});
+
+		// Opens a specific folder/workspace URI in the current window.
+		// Called when the user clicks a recent workspace card on the home page.
+		validatedIpcMain.handle('vscode:openFolderInCurrentWindow', async (event, { uri }: { uri: { scheme: string; authority?: string; path?: string; query?: string; fragment?: string } }) => {
+			if (!this.windowsMainService) {
+				return;
+			}
+			await this.windowsMainService.open({
+				context: OpenContext.API,
+				cli: this.environmentMainService.args,
+				urisToOpen: [{ folderUri: URI.revive(uri) }],
+				forceReuseWindow: true,
+				contextWindowId: this.windowsMainService.getWindowByWebContents(event.sender)?.id
+			});
+		});
+
+		// Reloads the current window as an empty (home) window, showing the app shell home page.
+		// Called by the "← Home" button in the workspace-mode nav bar.
+		validatedIpcMain.handle('vscode:openHomeScreen', async (event) => {
+			if (!this.windowsMainService) {
+				return;
+			}
+			await this.windowsMainService.open({
+				context: OpenContext.API,
+				cli: this.environmentMainService.args,
+				urisToOpen: [],
+				forceEmpty: true,
+				forceReuseWindow: true,
+				contextWindowId: this.windowsMainService.getWindowByWebContents(event.sender)?.id
+			});
+		});
+
+		//#endregion
+
 		//#endregion
 	}
 
@@ -647,7 +722,8 @@ export class CodeApplication extends Disposable {
 		const windowsMainService = this.windowsMainService = accessor.get(IWindowsMainService);
 		const urlService = accessor.get(IURLService);
 		const nativeHostMainService = this.nativeHostMainService = accessor.get(INativeHostMainService);
-		const dialogMainService = accessor.get(IDialogMainService);
+		const dialogMainService = this.dialogMainServiceForShell = accessor.get(IDialogMainService);
+		this.workspacesHistoryMainService = accessor.get(IWorkspacesHistoryMainService);
 
 		// Install URL handlers that deal with protocl URLs either
 		// from this process by opening windows and/or by forwarding

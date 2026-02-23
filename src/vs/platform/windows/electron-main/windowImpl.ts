@@ -1207,7 +1207,11 @@ export class CodeWindow extends BaseWindow implements ICodeWindow {
 		} else if (configuration.isSessionsWindow) {
 			windowUrl = FileAccess.asBrowserUri(`vs/sessions/electron-browser/sessions${this.environmentMainService.isBuilt ? '' : '-dev'}.html`).toString(true);
 		} else {
-			windowUrl = FileAccess.asBrowserUri(`vs/code/electron-browser/workbench/workbench${this.environmentMainService.isBuilt ? '' : '-dev'}.html`).toString(true);
+			// Use the app shell entry point (appShell.html) as the default for all regular windows.
+			// The app shell detects workspace mode at runtime and either shows the custom home page
+			// or bootstraps VS Code into a sub-container. The original workbench.html remains
+			// available for use cases that require bypassing the shell.
+			windowUrl = FileAccess.asBrowserUri(`vs/code/electron-browser/app/appShell${this.environmentMainService.isBuilt ? '' : '-dev'}.html`).toString(true);
 		}
 		this._win.loadURL(windowUrl);
 
